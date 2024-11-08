@@ -241,3 +241,224 @@ def compute_length(solution, dist_matrix):
         from_node = node
     total_length += dist_matrix[starting_node, from_node]
     return total_length
+
+
+def ils(solution, instance, constant_temperature=0.95, iterations_for_each_temp=100):
+    # initial setup
+    # initialize the temperature T = tmax
+    temperature = instance.best_sol / np.sqrt(instance.nPoints)
+
+    # save current and initialiye best solution variables
+    current_sol = np.array(solution)
+    current_len = compute_length(solution, instance.dist_matrix)
+    best_sol = np.array(solution)
+    best_len = current_len
+
+    # main loop
+    while temperature > 0.001:
+        for it in range(iterations_for_each_temp):
+            # perturbation with Double Bridge
+            next_sol_p, new_cost_p = DoubleBridge.perturbate_solution(current_sol,
+                                                                      current_len,
+                                                                      instance.dist_matrix)
+            # print(new_cost_p)
+            # local search
+            next_sol, new_cost = local_search(next_sol_p, new_cost_p, instance)
+            # print(new_cost, current_len)
+            # print()
+            # break
+            # acceptance criterions
+            if new_cost - current_len < 0:
+                # print('updated sol')
+                current_sol = next_sol
+                current_len = new_cost
+                if current_len < best_len:
+                    # print("update best")
+                    best_sol = current_sol
+                    best_len = current_len
+                    # print(best_len)
+                # print()
+            else:
+                r = np.random.uniform(0, 1)
+                if r < np.exp(- (new_cost - current_len) / temperature):
+                    current_sol = next_sol
+                    current_len = new_cost
+        # decrease temprateure
+        temperature *= constant_temperature
+    return best_sol
+
+
+# same code seen in previous tutorials
+# in this case its 2opt, but for ILS it can be any local search algorithm
+def local_search(solution, new_len, instance):
+    matrix_dist = instance.dist_matrix
+    new_tsp_sequence = np.copy(np.array(solution))
+    uncross = 0
+    seq_length = len(solution)
+    try_again = True
+    while uncross < 10:
+        new_tsp_sequence = np.roll(new_tsp_sequence, np.random.randint(seq_length)).astype(np.int64)
+        new_tsp_sequence, new_reward, uncr_ = step2opt(new_tsp_sequence, matrix_dist, new_len)
+        uncross += uncr_
+        if new_reward < new_len:
+            new_len = new_reward
+            try_again = True
+        else:
+            if try_again:
+                try_again = False
+            else:
+                return new_tsp_sequence, new_len
+
+    return new_tsp_sequence.tolist(), new_len
+
+
+def step2opt(solution, matrix_dist, distance):
+    seq_length = len(solution)
+    tsp_sequence = np.copy(solution)
+    uncrosses = 0
+    for i in range(seq_length):
+        for j in range(i + 1, seq_length):
+            if gain_2opt(i, j, tsp_sequence, matrix_dist) > 0:
+                new_distance = distance - gain_2opt(i, j, tsp_sequence, matrix_dist)
+                tsp_sequence = swap2opt(tsp_sequence, i, j)
+                # print(new_distance, distance)
+                return tsp_sequence, new_distance, 1
+    return tsp_sequence, distance, 1
+
+
+def swap2opt(tsp_sequence, i, j):
+    new_tsp_sequence = np.copy(tsp_sequence)
+    new_tsp_sequence[i:j] = np.flip(tsp_sequence[i:j], axis=0)
+    return new_tsp_sequence.astype(np.int64)
+
+
+def gain_2opt(i, j, tsp_sequence, matrix_dist):
+    try:
+        old_link_len = (matrix_dist[tsp_sequence[i],
+        tsp_sequence[i - 1]]
+                        + matrix_dist[tsp_sequence[j],
+                tsp_sequence[j - 1]])
+        changed_links_len = (matrix_dist[tsp_sequence[j],
+        tsp_sequence[i]]
+                             + matrix_dist[tsp_sequence[i - 1],
+                tsp_sequence[j - 1]])
+        return + old_link_len - changed_links_len
+    except:
+        print(i, j, tsp_sequence[i], tsp_sequence[j], tsp_sequence[i - 1], tsp_sequence[j - 1])
+
+
+class DoubleBridge:
+
+    @staticmethod
+    def difference_cost(solution, a, b, c, d, matrix):
+        n = matrix.shape[0]
+        to_remove = matrix[solution[a - 1], solution[a]] + matrix[solution[b - 1], solution[b]] + matrix[
+            solution[c - 1], solution[c]] + matrix[solution[d - 1], solution[d]]
+        to_add = matrix[solution[a], solution[c - 1]] + matrix[solution[b], solution[d - 1]] + matrix[
+            solution[c], solution[a - 1]] + matrix[solution[d], solution[b - 1]]
+        return to_add - to_remove
+
+    @staticmethod
+    def perturbate_solution(solution, actual_cost, matrix):
+        # generate 4 random indices
+        a, b, c, d = np.sort(np.random.choice(matrix.shape[0], size=4, replace=False))
+        # get new solution of double bridge
+        B = solution[a:b]
+        C = solution[b:c]
+        D = solution[c:d]
+        A = np.concatenate((solution[d:], solution[:a]))
+        new_solution = np.concatenate((A, D, C, B))
+        # double bridge gain computation
+        new_length = actual_cost + DoubleBridge.difference_cost(solution, a, b, c, d, matrix)
+        return new_solution, new_length
+
+
+# while loop, calling step2opt until the new solution is shorter (an improvment)
+# when the new solution is smaller than the previous one then you keep going in the while
+# if this is not true, we return the solution we found
+def loop2opt(solution, instance, max_num_of_uncrosses=10000):
+    matrix_dist = instance.dist_matrix
+    new_len = compute_length(solution, matrix_dist)
+    new_tsp_sequence = np.copy(np.array(solution))
+    uncross = 0
+    try_again = True
+    seq_length = new_len
+    # TODO
+    while uncross < max_num_of_uncrosses:
+        new_tsp_sequence, new_reward, uncr_ = step2opt(new_tsp_sequence, matrix_dist, new_len)
+        new_tsp_sequence = np.roll(new_tsp_sequence, np.random.randint(seq_length)).astype(np.int64)
+        if new_reward < new_len:
+            new_len = new_reward
+            try_again = True
+            uncross += uncr_
+        else:
+            if try_again:
+                try_again = False
+            else:
+                return new_tsp_sequence.tolist(), new_len, uncross
+    # END TODO
+    return new_tsp_sequence.tolist(), new_len, uncross
+
+
+def sa(solution, instance, constant_temperature=0.95, iterations_for_each_temp=100):
+    # initial setup
+    # initialize the temperature T = tmax
+    temperature = instance.best_sol / np.sqrt(instance.nPoints)
+
+    # initializing initial solution and len (x)
+    current_sol = np.array(solution)
+    # initial energey of x, E(x), energy is the tour lenght
+    current_len = compute_length(solution, instance.dist_matrix)
+
+    # variables to save the best sol
+    best_sol = np.array(solution)
+    best_len = current_len
+    # main loop
+    while temperature > 0.001: # lowest accepted temeperature, T > Tmin and E > Eth
+        # TODO
+        # equilibrium for the current temperature, or specify max iteration for each temperature
+        for it in range(iterations_for_each_temp):
+            # generate new candidate solution from neighbors
+            next_sol, delta_E = random_sol_from_neigh(current_sol, instance)
+            # if neighbor solution is an improvment: accept it and save it in current and best solution variables
+            if delta_E < 0:
+                current_sol = next_sol
+                current_len += delta_E
+                if current_len < best_len:
+                    best_sol = current_sol
+                    best_len = current_len
+            else: # neighbor solution is not an improvment: compute exp(-deltaE/E) and generate a random number r in range [0, 1] and ecide if accept it or not
+                r = np.random.uniform(0, 1)
+                if r < np.exp(- delta_E / temperature):
+                    current_sol = next_sol
+                    current_len += delta_E
+
+        # decrease temperature
+        temperature *= constant_temperature
+    # END TODO
+    # return best tour solution
+    return best_sol.tolist()
+
+# genrate a random solution that is neghbor to the exisitng solution
+def random_sol_from_neigh(solution, instance):
+    # generate 2 random i and j
+    i, j = np.random.choice(np.arange(1, len(solution) - 1), 2, replace=False)
+    # sort i and j
+    i, j = np.sort([i, j])
+    solution = np.roll(solution, np.random.randint(len(solution)))
+    # do an 2opt swap based on the 2 random i an j generated, and compute the gain of this 2opt
+    return sa_swap2opt(solution, i, j), gain(i, j, solution, instance.dist_matrix)
+
+# swap2opt step as seen in previous tutorial
+def sa_swap2opt(tsp_sequence, i, j):
+    new_tsp_sequence = np.copy(tsp_sequence)
+    new_tsp_sequence[i:j + 1] = np.flip(tsp_sequence[i:j + 1], axis=0)  # flip or swap ?
+    return new_tsp_sequence
+
+# swap2opt gain as seen in previous tutorial
+def gain(i, j, tsp_sequence, matrix_dist):
+    old_link_len = (matrix_dist[tsp_sequence[i], tsp_sequence[i - 1]] + matrix_dist[
+        tsp_sequence[j], tsp_sequence[j + 1]])
+    changed_links_len = (matrix_dist[tsp_sequence[j], tsp_sequence[i - 1]] + matrix_dist[
+        tsp_sequence[i], tsp_sequence[j + 1]])
+    return - old_link_len + changed_links_len
